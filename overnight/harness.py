@@ -59,6 +59,11 @@ class OvernightConfig:
     # Test/mock mode - simulate claude responses for testing
     test_mode: bool = False
 
+    # Use direct API instead of CLI (bypasses CLI issues)
+    use_api: bool = False
+    api_key: Optional[str] = None
+    model: str = "claude-sonnet-4-20250514"
+
     @classmethod
     def from_file(cls, path: Path) -> "OvernightConfig":
         """Load configuration from JSON file."""
@@ -244,6 +249,10 @@ class OvernightHarness:
         if self.config.test_mode:
             return self._mock_claude_response(prompt)
 
+        # Direct API mode - bypass CLI entirely
+        if self.config.use_api:
+            return self._run_api(prompt)
+
         cmd = [
             "claude",
             "--print",  # Non-interactive mode
@@ -297,6 +306,71 @@ class OvernightHarness:
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _run_api(self, prompt: str) -> Dict[str, Any]:
+        """Run task using direct API call (bypasses CLI)."""
+        import os
+
+        api_key = self.config.api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return {
+                "success": False,
+                "error": "No API key. Set ANTHROPIC_API_KEY or use --api-key"
+            }
+
+        self.oversight.log("DEBUG", f"Using direct API with model {self.config.model}")
+
+        try:
+            import urllib.request
+            import urllib.error
+
+            data = json.dumps({
+                "model": self.config.model,
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": prompt}]
+            }).encode()
+
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=data,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                }
+            )
+
+            with urllib.request.urlopen(req, timeout=self.config.task_timeout_seconds) as resp:
+                result = json.loads(resp.read().decode())
+
+            # Extract text content
+            output = ""
+            for block in result.get("content", []):
+                if block.get("type") == "text":
+                    output += block.get("text", "")
+
+            return {
+                "success": True,
+                "output": output,
+                "usage": result.get("usage", {}),
+            }
+
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode() if e.fp else str(e)
+            return {
+                "success": False,
+                "error": f"API error ({e.code}): {error_body}"
+            }
+        except urllib.error.URLError as e:
+            return {
+                "success": False,
+                "error": f"Network error: {e.reason}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"API call failed: {e}"
+            }
 
     def _mock_claude_response(self, prompt: str) -> Dict[str, Any]:
         """Generate mock response for test mode."""

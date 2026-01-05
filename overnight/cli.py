@@ -104,6 +104,22 @@ def create_parser() -> argparse.ArgumentParser:
         default=3600,
         help="Timeout per task in seconds (default: 3600)"
     )
+    run_parser.add_argument(
+        "--use-api",
+        action="store_true",
+        help="Use direct API calls instead of Claude CLI"
+    )
+    run_parser.add_argument(
+        "--api-key",
+        type=str,
+        help="Anthropic API key (or set ANTHROPIC_API_KEY)"
+    )
+    run_parser.add_argument(
+        "--model",
+        type=str,
+        default="claude-sonnet-4-20250514",
+        help="Model to use (default: claude-sonnet-4-20250514)"
+    )
 
     # Resume command
     resume_parser = subparsers.add_parser("resume", help="Resume interrupted run")
@@ -198,6 +214,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             checkpoint_dir=str(args.output_dir),
             task_timeout_seconds=args.timeout,
             test_mode=args.test_mode,
+            use_api=args.use_api,
+            api_key=args.api_key,
+            model=args.model,
         )
 
     # Dry run mode
@@ -209,6 +228,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"  Max retries: {config.max_task_retries}")
         print(f"  Task timeout: {config.task_timeout_seconds}s")
         print(f"  Test mode: {config.test_mode}")
+        print(f"  Use API: {config.use_api}")
         print(f"\nTasks ({len(tasks)}):")
         for i, task in enumerate(tasks, 1):
             print(f"  {i}. {task}")
@@ -222,6 +242,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"Starting overnight run at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if config.test_mode:
         print("[TEST MODE - Using mock Claude responses]")
+    elif config.use_api:
+        print(f"[API MODE - Using direct API with {config.model}]")
     print(f"Tasks: {len(tasks)}")
     print(f"Max runtime: {config.max_runtime_hours} hours")
     print(f"Risk tolerance: {config.risk_tolerance}")
