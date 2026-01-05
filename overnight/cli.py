@@ -93,6 +93,17 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show what would be run without executing"
     )
+    run_parser.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Run with mock Claude responses (for testing the harness)"
+    )
+    run_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=3600,
+        help="Timeout per task in seconds (default: 3600)"
+    )
 
     # Resume command
     resume_parser = subparsers.add_parser("resume", help="Resume interrupted run")
@@ -174,6 +185,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             max_runtime_hours=args.max_hours,
             risk_tolerance=args.risk_tolerance,
             checkpoint_dir=str(args.output_dir),
+            task_timeout_seconds=args.timeout,
+            test_mode=args.test_mode,
         )
 
     # Dry run mode
@@ -183,6 +196,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"  Max runtime: {config.max_runtime_hours} hours")
         print(f"  Risk tolerance: {config.risk_tolerance}")
         print(f"  Max retries: {config.max_task_retries}")
+        print(f"  Task timeout: {config.task_timeout_seconds}s")
+        print(f"  Test mode: {config.test_mode}")
         print(f"\nTasks ({len(tasks)}):")
         for i, task in enumerate(tasks, 1):
             print(f"  {i}. {task}")
@@ -194,9 +209,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     harness.add_tasks(tasks)
 
     print(f"Starting overnight run at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if config.test_mode:
+        print("[TEST MODE - Using mock Claude responses]")
     print(f"Tasks: {len(tasks)}")
     print(f"Max runtime: {config.max_runtime_hours} hours")
     print(f"Risk tolerance: {config.risk_tolerance}")
+    print(f"Task timeout: {config.task_timeout_seconds}s")
     print("-" * 40)
 
     report = harness.run()

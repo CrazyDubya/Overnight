@@ -53,6 +53,12 @@ class OvernightConfig:
     # Risk tolerance (1-5, where 1 is most conservative)
     risk_tolerance: int = 2
 
+    # Task timeout (seconds) - how long to wait for each claude invocation
+    task_timeout_seconds: int = 3600  # 1 hour default
+
+    # Test/mock mode - simulate claude responses for testing
+    test_mode: bool = False
+
     @classmethod
     def from_file(cls, path: Path) -> "OvernightConfig":
         """Load configuration from JSON file."""
@@ -216,21 +222,30 @@ class OvernightHarness:
 
     def _run_claude_code(self, prompt: str) -> Dict[str, Any]:
         """Run Claude Code with the given prompt."""
+        # Test mode - simulate responses for integration testing
+        if self.config.test_mode:
+            return self._mock_claude_response(prompt)
+
         cmd = [
             "claude",
             "--print",  # Non-interactive mode
+            "--dangerously-skip-permissions",  # Skip permission prompts
             "--output-format", "json",
             prompt,
         ]
+
+        self.oversight.log("DEBUG", f"Executing: claude --print ...")
 
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3600,  # 1 hour max per invocation
+                timeout=self.config.task_timeout_seconds,
                 cwd=self.working_dir,
             )
+
+            self.oversight.log("DEBUG", f"Claude exit code: {result.returncode}")
 
             if result.returncode == 0:
                 try:
@@ -238,16 +253,56 @@ class OvernightHarness:
                 except json.JSONDecodeError:
                     return {"success": True, "output": result.stdout}
             else:
+                # Check for common error patterns
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                if "auth" in error_msg.lower() or "unauthorized" in error_msg.lower():
+                    error_msg = f"Authentication required: {error_msg}"
+                elif not error_msg.strip():
+                    error_msg = "Claude CLI returned no output (may need authentication)"
+
                 return {
                     "success": False,
                     "output": result.stdout,
-                    "error": result.stderr,
+                    "error": error_msg,
                 }
 
         except subprocess.TimeoutExpired:
-            return {"success": False, "error": "Task timeout (1h)"}
+            self.oversight.log("ERROR", f"Task timeout after {self.config.task_timeout_seconds}s")
+            return {
+                "success": False,
+                "error": f"Task timeout ({self.config.task_timeout_seconds}s) - Claude CLI may be waiting for input"
+            }
+        except FileNotFoundError:
+            return {
+                "success": False,
+                "error": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _mock_claude_response(self, prompt: str) -> Dict[str, Any]:
+        """Generate mock response for test mode."""
+        import random
+
+        # Simulate varying response times
+        time.sleep(random.uniform(0.1, 0.5))
+
+        # Simulate occasional failures for realistic testing
+        if random.random() < 0.1:  # 10% failure rate
+            return {
+                "success": False,
+                "error": "Simulated random failure for testing",
+                "output": "",
+            }
+
+        return {
+            "success": True,
+            "output": f"[TEST MODE] Simulated successful execution of task.\nPrompt received: {prompt[:100]}...",
+            "result": {
+                "cost_usd": 0.001 * random.uniform(0.5, 2.0),
+                "duration_api_ms": random.randint(500, 3000),
+            }
+        }
 
     def _backoff(self, attempt: int) -> None:
         """Exponential backoff between retries."""
