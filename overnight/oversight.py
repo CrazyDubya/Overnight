@@ -24,6 +24,7 @@ class CheckpointData:
     tasks_completed: int
     results: List[Dict[str, Any]]
     state: str
+    tasks: List[str] = field(default_factory=list)  # Full task list for resume
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -175,6 +176,7 @@ class OversightManager:
             tasks_completed=data["tasks_completed"],
             results=data["results"],
             state=data["state"],
+            tasks=data.get("tasks", []),
             metadata=data.get("metadata", {}),
         )
 

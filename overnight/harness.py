@@ -161,6 +161,7 @@ class OvernightHarness:
         start = time.time()
         retries = 0
         decisions = []
+        last_result: Optional[Dict[str, Any]] = None
 
         while retries <= self.config.max_task_retries:
             try:
@@ -177,20 +178,35 @@ class OvernightHarness:
 
                 # Execute via Claude Code CLI
                 result = self._run_claude_code(prompt)
+                last_result = result
 
                 # Check for stuck patterns
                 if self.stuck_detector.check(result.get("output", "")):
                     raise StuckError(f"Stuck pattern detected: {self.stuck_detector.last_pattern}")
 
-                return TaskResult(
-                    task_id=task_id,
-                    success=result.get("success", False),
-                    output=result.get("output", ""),
-                    error=result.get("error"),
-                    duration_seconds=time.time() - start,
-                    retries=retries,
-                    decisions_made=decisions,
-                )
+                # Success - return immediately
+                if result.get("success", False):
+                    return TaskResult(
+                        task_id=task_id,
+                        success=True,
+                        output=result.get("output", ""),
+                        error=None,
+                        duration_seconds=time.time() - start,
+                        retries=retries,
+                        decisions_made=decisions,
+                    )
+
+                # Non-exception failure - retry
+                error_msg = result.get("error", "Unknown error")
+                self.oversight.log("WARNING", f"Task failed (attempt {retries + 1}): {error_msg}")
+                decisions.append({
+                    "type": "retry",
+                    "reason": error_msg,
+                    "attempt": retries + 1,
+                })
+                retries += 1
+                if retries <= self.config.max_task_retries:
+                    self._backoff(retries)
 
             except StuckError as e:
                 self.oversight.log("WARNING", f"Stuck detected: {e}")
@@ -202,21 +218,23 @@ class OvernightHarness:
                     "action": recovery_action,
                 })
                 retries += 1
-                self._backoff(retries)
+                if retries <= self.config.max_task_retries:
+                    self._backoff(retries)
 
             except Exception as e:
                 self.oversight.log("ERROR", f"Task error: {e}")
                 retries += 1
-                self._backoff(retries)
+                if retries <= self.config.max_task_retries:
+                    self._backoff(retries)
 
         # All retries exhausted
         return TaskResult(
             task_id=task_id,
             success=False,
-            output="",
-            error=f"Max retries ({self.config.max_task_retries}) exceeded",
+            output=last_result.get("output", "") if last_result else "",
+            error=last_result.get("error", f"Max retries ({self.config.max_task_retries}) exceeded") if last_result else f"Max retries ({self.config.max_task_retries}) exceeded",
             duration_seconds=time.time() - start,
-            retries=retries,
+            retries=retries - 1,  # -1 because we incremented before exiting loop
             decisions_made=decisions,
         )
 
@@ -327,6 +345,7 @@ class OvernightHarness:
             tasks_completed=len(self.results),
             results=[r.__dict__ for r in self.results],
             state=self.state.value,
+            tasks=self.tasks,  # Save full task list for resume
         )
         self.oversight.save_checkpoint(data)
 
@@ -388,10 +407,12 @@ class OvernightHarness:
 
     def _generate_report(self) -> "MorningReport":
         """Generate a summary report of the overnight run."""
+        # Use results count as total (handles resume case where tasks is sliced)
+        total = len(self.results)
         return MorningReport(
             start_time=self.start_time,
             end_time=datetime.now(),
-            total_tasks=len(self.tasks),
+            total_tasks=total,
             completed_tasks=len([r for r in self.results if r.success]),
             failed_tasks=len([r for r in self.results if not r.success]),
             final_state=self.state,
@@ -407,10 +428,21 @@ class OvernightHarness:
 
         self.oversight.log("INFO", f"Resuming from checkpoint: {checkpoint.timestamp}")
 
-        # Restore state
+        # Restore tasks from checkpoint
+        if not checkpoint.tasks:
+            raise ValueError("Checkpoint does not contain task list - cannot resume")
+
+        # Restore state - skip completed tasks
         completed = checkpoint.tasks_completed
-        self.tasks = self.tasks[completed:]
+        self.tasks = checkpoint.tasks[completed:]
         self.state = LoopState(checkpoint.state)
+
+        # Restore previous results
+        self.results = [
+            TaskResult(**r) for r in checkpoint.results
+        ]
+
+        self.oversight.log("INFO", f"Restored {completed} completed tasks, {len(self.tasks)} remaining")
 
         return self.run()
 

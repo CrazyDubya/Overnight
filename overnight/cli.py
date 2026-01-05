@@ -113,6 +113,17 @@ def create_parser() -> argparse.ArgumentParser:
         default=Path(".overnight"),
         help="Directory containing checkpoint"
     )
+    resume_parser.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Run with mock Claude responses (for testing)"
+    )
+    resume_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=3600,
+        help="Timeout per task in seconds (default: 3600)"
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Check overnight run status")
@@ -234,8 +245,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_resume(args: argparse.Namespace) -> int:
     """Execute the resume command."""
-    config = OvernightConfig(checkpoint_dir=str(args.checkpoint_dir))
+    config = OvernightConfig(
+        checkpoint_dir=str(args.checkpoint_dir),
+        test_mode=args.test_mode,
+        task_timeout_seconds=args.timeout,
+    )
     harness = OvernightHarness(config=config)
+
+    if config.test_mode:
+        print("[TEST MODE - Using mock Claude responses]")
 
     try:
         report = harness.resume()
