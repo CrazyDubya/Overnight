@@ -17,6 +17,26 @@ Overnight provides infrastructure to run Claude Code autonomously by:
 5. **Maintaining Oversight** - Detailed logging and checkpoint/resume capability
 6. **Generating Reports** - Morning summaries of what happened overnight
 
+## Prerequisites
+
+**Important**: This harness requires Claude Code CLI to be authenticated before use.
+
+```bash
+# First, authenticate Claude Code interactively
+claude
+
+# Once authenticated, you can run overnight tasks
+overnight run "Your task here"
+```
+
+The harness spawns Claude Code processes which need access to your authentication. This works with:
+- **Claude Pro/Team subscriptions** (OAuth authentication)
+- **API keys** (set `ANTHROPIC_API_KEY` environment variable)
+
+### Future: Claude SDK Integration
+
+For production use with full capabilities (tool use, file operations, bash, cost controls), we plan to integrate with the Claude Agent SDK when available. The current CLI-based approach is a stepping stone.
+
 ## Installation
 
 ```bash
@@ -34,6 +54,9 @@ pip install -e .
 ## Quick Start
 
 ```bash
+# First: ensure Claude Code is authenticated
+claude  # Interactive login if needed
+
 # Initialize configuration
 overnight init
 
